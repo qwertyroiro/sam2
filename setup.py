@@ -23,7 +23,7 @@ with open("README.md", "r", encoding="utf-8") as f:
 # Required dependencies
 REQUIRED_PACKAGES = [
     "numpy>=1.24.4",
-    "tqdm>=4.66.1",
+    "rich>=13.0.0",
     "hydra-core>=1.3.2",
     "iopath>=0.1.9",
     "pillow>=9.4.0",

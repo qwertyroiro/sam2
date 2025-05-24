@@ -18,8 +18,9 @@ from typing import Dict, List, Tuple
 
 import cv2
 import numpy as np
-import tqdm
 from PIL import Image
+from rich.progress import Progress, SpinnerColumn, BarColumn, MofNCompleteColumn
+from rich.progress import TaskProgressColumn, TimeElapsedColumn, TimeRemainingColumn, TextColumn
 from skimage.morphology import disk
 
 
@@ -401,15 +402,28 @@ def benchmark(
 
         if single_dataset:
             if verbose:
-                results = tqdm.tqdm(
-                    pool.imap(
+                # Setup progress bar with rich
+                rich_progress = Progress(
+                        SpinnerColumn(),
+                        BarColumn(),
+                        MofNCompleteColumn(),
+                        TaskProgressColumn(),
+                        TimeElapsedColumn(),
+                        TimeRemainingColumn(),
+                        TextColumn("[progress.description]{task.description}", justify="right"),
+                )
+                # Start progress tracking
+                with rich_progress as progress:
+                    task = progress.add_task("Evaluating videos", total=len(videos))
+                    results = []
+                    for result in pool.imap(
                         VideoEvaluator(
                             gt_root, mask_root, skip_first_and_last=skip_first_and_last
                         ),
                         videos,
-                    ),
-                    total=len(videos),
-                )
+                    ):
+                        results.append(result)
+                        progress.update(task, advance=1)
             else:
                 results = pool.map(
                     VideoEvaluator(

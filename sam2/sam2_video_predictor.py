@@ -8,8 +8,8 @@ import warnings
 from collections import OrderedDict
 
 import torch
-
-from tqdm import tqdm
+from rich.progress import Progress, SpinnerColumn, BarColumn, MofNCompleteColumn
+from rich.progress import TaskProgressColumn, TimeElapsedColumn, TimeRemainingColumn, TextColumn
 
 from sam2.modeling.sam2_base import NO_OBJ_SCORE, SAM2Base
 from sam2.utils.misc import concat_points, fill_holes_in_mask_scores, load_video_frames
@@ -700,49 +700,60 @@ class SAM2VideoPredictor(SAM2Base):
             )
             processing_order = range(start_frame_idx, end_frame_idx + 1)
 
-        for frame_idx in tqdm(processing_order, desc="propagate in video"):
-            # We skip those frames already in consolidated outputs (these are frames
-            # that received input clicks or mask). Note that we cannot directly run
-            # batched forward on them via `_run_single_frame_inference` because the
-            # number of clicks on each object might be different.
-            if frame_idx in consolidated_frame_inds["cond_frame_outputs"]:
-                storage_key = "cond_frame_outputs"
-                current_out = output_dict[storage_key][frame_idx]
-                pred_masks = current_out["pred_masks"]
-                if clear_non_cond_mem:
-                    # clear non-conditioning memory of the surrounding frames
-                    self._clear_non_cond_mem_around_input(inference_state, frame_idx)
-            elif frame_idx in consolidated_frame_inds["non_cond_frame_outputs"]:
-                storage_key = "non_cond_frame_outputs"
-                current_out = output_dict[storage_key][frame_idx]
-                pred_masks = current_out["pred_masks"]
-            else:
-                storage_key = "non_cond_frame_outputs"
-                current_out, pred_masks = self._run_single_frame_inference(
-                    inference_state=inference_state,
-                    output_dict=output_dict,
-                    frame_idx=frame_idx,
-                    batch_size=batch_size,
-                    is_init_cond_frame=False,
-                    point_inputs=None,
-                    mask_inputs=None,
-                    reverse=reverse,
-                    run_mem_encoder=True,
+        with Progress(
+                SpinnerColumn(),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TaskProgressColumn(),
+                TimeElapsedColumn(),
+                TimeRemainingColumn(),
+                TextColumn("[progress.description]{task.description}", justify="right"),
+        ) as progress:
+            task = progress.add_task("propagate in video", total=len(processing_order))
+            for frame_idx in processing_order:
+                # We skip those frames already in consolidated outputs (these are frames
+                # that received input clicks or mask). Note that we cannot directly run
+                # batched forward on them via `_run_single_frame_inference` because the
+                # number of clicks on each object might be different.
+                if frame_idx in consolidated_frame_inds["cond_frame_outputs"]:
+                    storage_key = "cond_frame_outputs"
+                    current_out = output_dict[storage_key][frame_idx]
+                    pred_masks = current_out["pred_masks"]
+                    if clear_non_cond_mem:
+                        # clear non-conditioning memory of the surrounding frames
+                        self._clear_non_cond_mem_around_input(inference_state, frame_idx)
+                elif frame_idx in consolidated_frame_inds["non_cond_frame_outputs"]:
+                    storage_key = "non_cond_frame_outputs"
+                    current_out = output_dict[storage_key][frame_idx]
+                    pred_masks = current_out["pred_masks"]
+                else:
+                    storage_key = "non_cond_frame_outputs"
+                    current_out, pred_masks = self._run_single_frame_inference(
+                        inference_state=inference_state,
+                        output_dict=output_dict,
+                        frame_idx=frame_idx,
+                        batch_size=batch_size,
+                        is_init_cond_frame=False,
+                        point_inputs=None,
+                        mask_inputs=None,
+                        reverse=reverse,
+                        run_mem_encoder=True,
+                    )
+                    output_dict[storage_key][frame_idx] = current_out
+                # Create slices of per-object outputs for subsequent interaction with each
+                # individual object after tracking.
+                self._add_output_per_object(
+                    inference_state, frame_idx, current_out, storage_key
                 )
-                output_dict[storage_key][frame_idx] = current_out
-            # Create slices of per-object outputs for subsequent interaction with each
-            # individual object after tracking.
-            self._add_output_per_object(
-                inference_state, frame_idx, current_out, storage_key
-            )
-            inference_state["frames_already_tracked"][frame_idx] = {"reverse": reverse}
+                inference_state["frames_already_tracked"][frame_idx] = {"reverse": reverse}
 
-            # Resize the output mask to the original video resolution (we directly use
-            # the mask scores on GPU for output to avoid any CPU conversion in between)
-            _, video_res_masks = self._get_orig_video_res_output(
-                inference_state, pred_masks
-            )
-            yield frame_idx, obj_ids, video_res_masks
+                # Resize the output mask to the original video resolution (we directly use
+                # the mask scores on GPU for output to avoid any CPU conversion in between)
+                _, video_res_masks = self._get_orig_video_res_output(
+                    inference_state, pred_masks
+                )
+                progress.update(task, advance=1)
+                yield frame_idx, obj_ids, video_res_masks
 
     def _add_output_per_object(
         self, inference_state, frame_idx, current_out, storage_key

@@ -8,7 +8,8 @@ import cv2
 
 import numpy as np
 import submitit
-import tqdm
+from rich.progress import Progress, SpinnerColumn, BarColumn, MofNCompleteColumn
+from rich.progress import TaskProgressColumn, TimeElapsedColumn, TimeRemainingColumn, TextColumn
 
 
 def get_args_parser():
@@ -101,14 +102,27 @@ def extract_frames(video_path, sample_rate):
 
 
 def submitit_launch(video_paths, sample_rate, save_root):
-    for path in tqdm.tqdm(video_paths):
-        frames = extract_frames(path, sample_rate)
-        output_folder = os.path.join(save_root, Path(path).stem)
-        if not os.path.exists(output_folder):
-            os.makedirs(output_folder)
-        for fid, frame in enumerate(frames):
-            frame_path = os.path.join(output_folder, f"{fid*sample_rate:05d}.jpg")
-            cv2.imwrite(frame_path, frame)
+    with Progress(
+            SpinnerColumn(),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            TextColumn("[progress.description]{task.description}", justify="right"),
+    ) as progress:
+        task = progress.add_task("Processing videos", total=len(video_paths))
+        for path in video_paths:
+            frames = extract_frames(path, sample_rate)
+            output_folder = os.path.join(save_root, Path(path).stem)
+            if not os.path.exists(output_folder):
+                os.makedirs(output_folder)
+            frame_task = progress.add_task(f"Saving frames for {Path(path).stem}", total=len(frames))
+            for fid, frame in enumerate(frames):
+                frame_path = os.path.join(output_folder, f"{fid*sample_rate:05d}.jpg")
+                cv2.imwrite(frame_path, frame)
+                progress.update(frame_task, advance=1)
+            progress.update(task, advance=1)
     print(f"Saved output to {save_root}")
 
 
@@ -148,14 +162,25 @@ if __name__ == "__main__":
     # Launch
     jobs = []
     with executor.batch():
-        for _, mp4_chunk in tqdm.tqdm(enumerate(chunked_mp4_files)):
-            job = executor.submit(
-                submitit_launch,
-                video_paths=mp4_chunk,
-                sample_rate=sample_rate,
-                save_root=save_root,
-            )
-            jobs.append(job)
+        with Progress(
+                SpinnerColumn(),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TaskProgressColumn(),
+                TimeElapsedColumn(),
+                TimeRemainingColumn(),
+                TextColumn("[progress.description]{task.description}", justify="right"),
+        ) as progress:
+            task = progress.add_task("Submitting jobs", total=len(chunked_mp4_files))
+            for _, mp4_chunk in enumerate(chunked_mp4_files):
+                job = executor.submit(
+                    submitit_launch,
+                    video_paths=mp4_chunk,
+                    sample_rate=sample_rate,
+                    save_root=save_root,
+                )
+                jobs.append(job)
+                progress.update(task, advance=1)
 
     for j in jobs:
         print(f"Slurm JobID: {j.job_id}")

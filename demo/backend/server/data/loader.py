@@ -13,7 +13,8 @@ from typing import Dict, Optional
 import imagesize
 from app_conf import GALLERY_PATH, POSTERS_PATH, POSTERS_PREFIX
 from data.data_types import Video
-from tqdm import tqdm
+from rich.progress import Progress, SpinnerColumn, BarColumn, MofNCompleteColumn
+from rich.progress import TaskProgressColumn, TimeElapsedColumn, TimeRemainingColumn, TextColumn
 
 
 def preload_data() -> Dict[str, Video]:
@@ -29,9 +30,20 @@ def preload_data() -> Dict[str, Video]:
     video_path_pattern = os.path.join(GALLERY_PATH, "**/*.mp4")
     video_paths = glob(video_path_pattern, recursive=True)
 
-    for p in tqdm(video_paths):
-        video = get_video(p, GALLERY_PATH)
-        all_videos[video.code] = video
+    with Progress(
+            SpinnerColumn(),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            TextColumn("[progress.description]{task.description}", justify="right"),
+    ) as progress:
+        task = progress.add_task("Loading videos", total=len(video_paths))
+        for p in video_paths:
+            video = get_video(p, GALLERY_PATH)
+            all_videos[video.code] = video
+            progress.update(task, advance=1)
 
     return all_videos
 

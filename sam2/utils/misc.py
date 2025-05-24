@@ -11,7 +11,8 @@ from threading import Thread
 import numpy as np
 import torch
 from PIL import Image
-from tqdm import tqdm
+from rich.progress import Progress, SpinnerColumn, BarColumn, MofNCompleteColumn
+from rich.progress import TaskProgressColumn, TimeElapsedColumn, TimeRemainingColumn, TextColumn
 
 
 def get_sdpa_settings():
@@ -136,8 +137,19 @@ class AsyncVideoFrameLoader:
         # load the rest of frames asynchronously without blocking the session start
         def _load_frames():
             try:
-                for n in tqdm(range(len(self.images)), desc="frame loading (JPEG)"):
-                    self.__getitem__(n)
+                with Progress(
+                        SpinnerColumn(),
+                        BarColumn(),
+                        MofNCompleteColumn(),
+                        TaskProgressColumn(),
+                        TimeElapsedColumn(),
+                        TimeRemainingColumn(),
+                        TextColumn("[progress.description]{task.description}", justify="right"),
+                ) as progress:
+                    task = progress.add_task("frame loading (JPEG)", total=len(self.images))
+                    for n in range(len(self.images)):
+                        self.__getitem__(n)
+                        progress.update(task, advance=1)
             except Exception as e:
                 self.exception = e
 
@@ -265,8 +277,19 @@ def load_video_frames_from_jpg_images(
         return lazy_images, lazy_images.video_height, lazy_images.video_width
 
     images = torch.zeros(num_frames, 3, image_size, image_size, dtype=torch.float32)
-    for n, img_path in enumerate(tqdm(img_paths, desc="frame loading (JPEG)")):
-        images[n], video_height, video_width = _load_img_as_tensor(img_path, image_size)
+    with Progress(
+            SpinnerColumn(),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            TextColumn("[progress.description]{task.description}", justify="right"),
+    ) as progress:
+        task = progress.add_task("frame loading (JPEG)", total=len(img_paths))
+        for n, img_path in enumerate(img_paths):
+            images[n], video_height, video_width = _load_img_as_tensor(img_path, image_size)
+            progress.update(task, advance=1)
     if not offload_video_to_cpu:
         images = images.to(compute_device)
         img_mean = img_mean.to(compute_device)
